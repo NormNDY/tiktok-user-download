@@ -25,7 +25,7 @@ permissions:
 jobs:
   tiktok-download-and-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # ۶ ساعت
+    timeout-minutes: 360
 
     steps:
       - name: 📥 Checkout repository
@@ -66,21 +66,20 @@ jobs:
             PROXY_ARG="--proxy socks5://127.0.0.1:1080"
           fi
 
-          # ساخت پوشه موقت برای دانلود
           DOWNLOAD_DIR="downloads/${TIKTOK_USER}"
           mkdir -p "$DOWNLOAD_DIR"
 
-          # استفاده از فایل archive برای ادامه‌ی دانلودهای قبلی
           ARCHIVE_FILE="archive_${TIKTOK_USER}.txt"
           if [ -f "$ARCHIVE_FILE" ]; then
             cp "$ARCHIVE_FILE" /tmp/archive.txt
-            echo "📂 archive پیدا شد، ادامهٔ دانلود از آخرین نقطه"
+            echo "📂 آرشیو قبلی پیدا شد، ادامه دانلود از آخرین نقطه"
           else
             touch /tmp/archive.txt
           fi
 
           echo "▸ شروع دانلود ویدیوها از @${TIKTOK_USER} ..."
 
+          # دانلود ویدیوها + استخراج تامبنیل
           yt-dlp --verbose \
             $PROXY_ARG \
             --format "bestvideo+bestaudio/best" \
@@ -95,60 +94,59 @@ jobs:
             --fragment-retries 10 \
             --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0" \
             "https://www.tiktok.com/@${TIKTOK_USER}" || {
-              echo "⚠️ دانلود با خطا مواجه شد، اما هرچه دانلود شده نگه داشته می‌شود."
+              echo "⚠️ دانلود به پایان رسید (ممکن است برخی ویدیوها از دسترس خارج شده باشند)"
             }
 
-          # کپی archive جدید به محل ذخیره
+          # کپی آرشیو جدید
           cp /tmp/archive.txt "$ARCHIVE_FILE"
 
-          echo "✅ دانلود تمام شد (یا متوقف شد)."
-
-      - name: 🖼️ جمع‌آوری اطلاعات برای گالری
-        run: |
-          # انتقال همهٔ عکس‌های thumbnail به پوشه thumbnails
+          # انتقال تامبنیل‌ها به پوشه thumbnails
           find downloads -name "*.jpg" -exec cp {} thumbnails/ \;
-          # تولید فایل manifest.txt برای هر ویدیو: id,title,original_url
+
+          # ساخت فایل manifest برای گالری
           > /tmp/manifest.txt
-          for video in downloads/${TIKTOK_USER}/*.mp4; do
+          for video in "${DOWNLOAD_DIR}"/*.mp4; do
             [ -f "$video" ] || continue
-            vid="${video##*/}"
-            vid="${vid%.mp4}"
-            # استخراج اطلاعات از yt-dlp (با استفاده از dump-json روی همان id)
-            # برای سرعت، فقط از روی فایل موجود نام id داریم، از API مجدد استفاده نمی‌کنیم
-            # می‌توانستیم در همان مرحلهٔ دانلود JSON را ذخیره کنیم. برای سادگی، فعلاً لینک را از id می‌سازیم.
-            echo "${vid}|Video ${vid}|https://www.tiktok.com/@${TIKTOK_USER}/video/${vid}" >> /tmp/manifest.txt
+            vid_id=$(basename "$video" .mp4)
+            original_url="https://www.tiktok.com/@${TIKTOK_USER}/video/${vid_id}"
+            # برای داشتن عنوان، از نام خود ویدیو استفاده می‌کنیم (محدود)
+            title="ویدیوی ${vid_id}"
+            echo "${vid_id}|${title}|${original_url}" >> /tmp/manifest.txt
           done
 
-      - name: 📦 ساخت آرشیوهای فشرده (حجم‌های ۱.۹GB)
-        run: |
-          cd downloads/${TIKTOK_USER}
-          # ساخت یک آرشیو 7z چندبخشی
-          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" *.mp4 *.jpg || true
-          # حالا فایل‌های split شده در downloads/ هستند
-          mkdir -p ../../release_assets
-          mv ../${TIKTOK_USER}_videos.7z* ../../release_assets/ 2>/dev/null || true
+          echo "✅ دانلود به پایان رسید. فایل manifest آماده است."
 
-      - name: 🖼️ ساخت گالری HTML
+      - name: 📦 ساخت آرشیوهای فشرده (بخش‌های ۱.۹GB)
         run: |
-          python3 <<PYEOF
-          import os, glob
+          cd downloads
+          # بسته‌بندی همه ویدیوها و تامبنیل‌های کاربر
+          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" "${TIKTOK_USER}/"*
+          cd ..
+
+          mkdir -p release_assets
+          mv ${TIKTOK_USER}_videos.7z* release_assets/ 2>/dev/null || true
+
+      - name: 🖼️ ساخت گالری HTML (اصلاح‌شده)
+        run: |
+          # نوشتن اسکریپت Python در یک فایل موقت
+          cat > /tmp/gen_gallery.py << 'EOF'
+          import os
 
           user = os.environ['TIKTOK_USER']
           repo = os.environ['GITHUB_REPOSITORY']
 
-          # خواندن manifest
           videos = []
-          try:
+          if os.path.exists('/tmp/manifest.txt'):
               with open('/tmp/manifest.txt', 'r', encoding='utf-8') as f:
                   for line in f:
-                      if not line.strip(): continue
-                      parts = line.strip().split('|')
+                      line = line.strip()
+                      if not line:
+                          continue
+                      parts = line.split('|')
                       if len(parts) >= 3:
                           vid_id, title, url = parts[0], parts[1], parts[2]
                           thumb = f"thumbnails/{vid_id}.jpg"
                           videos.append((vid_id, title, url, thumb))
-          except:
-              pass
 
           html = f"""<!DOCTYPE html>
           <html dir="rtl">
@@ -174,9 +172,9 @@ jobs:
           """
 
           if not videos:
-              html += "<p>هیچ ویدیویی یافت نشد.</p>"
+              html += "<p>هنوز ویدیویی دانلود نشده است. لطفاً بعد از دانلود دوباره بررسی کنید.</p>"
           else:
-              for (vid, title, url, thumb) in videos:
+              for vid, title, url, thumb in videos:
                   thumb_path = thumb if os.path.exists(thumb) else 'https://via.placeholder.com/250x350?text=No+Preview'
                   html += f"""
                   <div class="card">
@@ -191,12 +189,15 @@ jobs:
           </body>
           </html>"""
 
+          os.makedirs('_site', exist_ok=True)
           with open('_site/index.html', 'w', encoding='utf-8') as f:
               f.write(html)
-          PYEOF
+          print("✅ گالری ساخته شد.")
+          EOF
 
-          # کپی thumbnails به _site
-          cp -r thumbnails _site/ 2>/dev/null || true
+          python3 /tmp/gen_gallery.py
+        env:
+          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}
 
       - name: 🚀 انتشار گالری روی GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
@@ -216,7 +217,7 @@ jobs:
             ## 📦 آرشیو چندبخشی ویدیوهای تیک‌تاک @${{ github.event.inputs.tiktok_user }}
             - تعداد ویدیوها: تا ${{ github.event.inputs.max_videos }}
             - فرمت: 7z چندبخشی (با 7-Zip استخراج کنید)
-            - نحوهٔ استخراج: همهٔ فایل‌ها را دانلود کرده، سپس روی فایل `.7z.001` راست‌کلیک کرده و با 7-Zip استخراج کنید.
+            - **راهنما:** همهٔ فایل‌ها را در یک پوشه دانلود کنید، سپس روی فایل با پسوند `.7z.001` راست‌کلیک کرده و با 7-Zip گزینهٔ «Extract Here» را بزنید.
           files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -226,6 +227,6 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add archive_*.txt
-          git commit -m "📌 به‌روزرسانی archive تیک‌تاک" || echo "بدون تغییر"
+          git commit -m "📌 به‌روزرسانی آرشیو دانلود تیک‌تاک" || echo "بدون تغییر"
           git pull --rebase origin main 2>/dev/null || true
-          git push origin main || echo "Push ممکن است خطا دهد"
+          git push origin main || echo "Push ممکن است خطا دهد اما ادامه می‌دهیم"
