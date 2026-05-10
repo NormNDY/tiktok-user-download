@@ -1,0 +1,231 @@
+name: "🎵 TikTok User Downloader + Gallery"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiktok_user:
+        description: '👤 نام کاربری تیک‌تاک (بدون @)'
+        required: true
+        type: string
+      max_videos:
+        description: '🔢 حداکثر تعداد ویدیو'
+        required: true
+        default: '30'
+        type: choice
+        options: ['10', '30', '50', '100', '200', '500', '1000']
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  tiktok-download-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # ۶ ساعت
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: 🔧 نصب ابزارها
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg p7zip-full curl jq python3-pip
+          pip3 install -q yt-dlp
+
+      - name: 🛡️ راه‌اندازی WARP (عبور از تحریم)
+        run: |
+          docker run -d --name warp --restart=always \
+            -p 1080:1080 --cap-add NET_ADMIN \
+            -e WARP_ENABLE_WARP=yes \
+            caomingjun/warp
+          sleep 25
+          if curl -x socks5h://127.0.0.1:1080 -s --max-time 10 https://www.tiktok.com > /dev/null; then
+            echo "WARP_READY=true" >> $GITHUB_ENV
+            echo "✅ WARP فعال است"
+          else
+            echo "WARP_READY=false" >> $GITHUB_ENV
+            echo "⚠️ ادامه بدون پروکسی"
+          fi
+
+      - name: 📥 دانلود ویدیوهای کاربر
+        env:
+          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}
+          MAX_VIDEOS: ${{ github.event.inputs.max_videos }}
+        run: |
+          mkdir -p downloads thumbnails _site
+          PROXY_ARG=""
+          if [ "${WARP_READY:-false}" = "true" ]; then
+            PROXY_ARG="--proxy socks5://127.0.0.1:1080"
+          fi
+
+          # ساخت پوشه موقت برای دانلود
+          DOWNLOAD_DIR="downloads/${TIKTOK_USER}"
+          mkdir -p "$DOWNLOAD_DIR"
+
+          # استفاده از فایل archive برای ادامه‌ی دانلودهای قبلی
+          ARCHIVE_FILE="archive_${TIKTOK_USER}.txt"
+          if [ -f "$ARCHIVE_FILE" ]; then
+            cp "$ARCHIVE_FILE" /tmp/archive.txt
+            echo "📂 archive پیدا شد، ادامهٔ دانلود از آخرین نقطه"
+          else
+            touch /tmp/archive.txt
+          fi
+
+          echo "▸ شروع دانلود ویدیوها از @${TIKTOK_USER} ..."
+
+          yt-dlp --verbose \
+            $PROXY_ARG \
+            --format "bestvideo+bestaudio/best" \
+            --merge-output-format mp4 \
+            --output "${DOWNLOAD_DIR}/%(id)s.%(ext)s" \
+            --write-thumbnail --convert-thumbnails jpg \
+            --download-archive /tmp/archive.txt \
+            --playlist-end ${MAX_VIDEOS} \
+            --no-playlist-reverse \
+            --no-part \
+            --retries 10 \
+            --fragment-retries 10 \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0" \
+            "https://www.tiktok.com/@${TIKTOK_USER}" || {
+              echo "⚠️ دانلود با خطا مواجه شد، اما هرچه دانلود شده نگه داشته می‌شود."
+            }
+
+          # کپی archive جدید به محل ذخیره
+          cp /tmp/archive.txt "$ARCHIVE_FILE"
+
+          echo "✅ دانلود تمام شد (یا متوقف شد)."
+
+      - name: 🖼️ جمع‌آوری اطلاعات برای گالری
+        run: |
+          # انتقال همهٔ عکس‌های thumbnail به پوشه thumbnails
+          find downloads -name "*.jpg" -exec cp {} thumbnails/ \;
+          # تولید فایل manifest.txt برای هر ویدیو: id,title,original_url
+          > /tmp/manifest.txt
+          for video in downloads/${TIKTOK_USER}/*.mp4; do
+            [ -f "$video" ] || continue
+            vid="${video##*/}"
+            vid="${vid%.mp4}"
+            # استخراج اطلاعات از yt-dlp (با استفاده از dump-json روی همان id)
+            # برای سرعت، فقط از روی فایل موجود نام id داریم، از API مجدد استفاده نمی‌کنیم
+            # می‌توانستیم در همان مرحلهٔ دانلود JSON را ذخیره کنیم. برای سادگی، فعلاً لینک را از id می‌سازیم.
+            echo "${vid}|Video ${vid}|https://www.tiktok.com/@${TIKTOK_USER}/video/${vid}" >> /tmp/manifest.txt
+          done
+
+      - name: 📦 ساخت آرشیوهای فشرده (حجم‌های ۱.۹GB)
+        run: |
+          cd downloads/${TIKTOK_USER}
+          # ساخت یک آرشیو 7z چندبخشی
+          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" *.mp4 *.jpg || true
+          # حالا فایل‌های split شده در downloads/ هستند
+          mkdir -p ../../release_assets
+          mv ../${TIKTOK_USER}_videos.7z* ../../release_assets/ 2>/dev/null || true
+
+      - name: 🖼️ ساخت گالری HTML
+        run: |
+          python3 <<PYEOF
+          import os, glob
+
+          user = os.environ['TIKTOK_USER']
+          repo = os.environ['GITHUB_REPOSITORY']
+
+          # خواندن manifest
+          videos = []
+          try:
+              with open('/tmp/manifest.txt', 'r', encoding='utf-8') as f:
+                  for line in f:
+                      if not line.strip(): continue
+                      parts = line.strip().split('|')
+                      if len(parts) >= 3:
+                          vid_id, title, url = parts[0], parts[1], parts[2]
+                          thumb = f"thumbnails/{vid_id}.jpg"
+                          videos.append((vid_id, title, url, thumb))
+          except:
+              pass
+
+          html = f"""<!DOCTYPE html>
+          <html dir="rtl">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>گالری ویدیوهای @{user}</title>
+              <style>
+                  body {{ font-family: Tahoma, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }}
+                  h1 {{ color: #58a6ff; text-align: center; }}
+                  .gallery {{ max-width: 1000px; margin: 0 auto; display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }}
+                  .card {{ background: #161b22; border-radius: 12px; overflow: hidden; width: 250px; box-shadow: 0 4px 10px rgba(0,0,0,0.4); }}
+                  .card img {{ width: 100%; height: 350px; object-fit: cover; }}
+                  .card .info {{ padding: 10px; }}
+                  .card .info a {{ color: #58a6ff; text-decoration: none; font-size: 0.9em; }}
+                  @media (max-width: 600px) {{ .card {{ width: 100%; }} }}
+              </style>
+          </head>
+          <body>
+              <h1>🎵 @{user} – ویدیوهای دانلودشده</h1>
+              <p style="text-align:center; color:#8b949e;">برای دانلود همهٔ ویدیوها به <a href="https://github.com/{repo}/releases" target="_blank">بخش Releases</a> مراجعه کنید.</p>
+              <div class="gallery">
+          """
+
+          if not videos:
+              html += "<p>هیچ ویدیویی یافت نشد.</p>"
+          else:
+              for (vid, title, url, thumb) in videos:
+                  thumb_path = thumb if os.path.exists(thumb) else 'https://via.placeholder.com/250x350?text=No+Preview'
+                  html += f"""
+                  <div class="card">
+                      <img src="{thumb_path}" alt="{title}">
+                      <div class="info">
+                          <a href="{url}" target="_blank">{title}</a>
+                      </div>
+                  </div>"""
+
+          html += """
+              </div>
+          </body>
+          </html>"""
+
+          with open('_site/index.html', 'w', encoding='utf-8') as f:
+              f.write(html)
+          PYEOF
+
+          # کپی thumbnails به _site
+          cp -r thumbnails _site/ 2>/dev/null || true
+
+      - name: 🚀 انتشار گالری روی GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          publish_branch: gh-pages
+          user_name: 'github-actions'
+          user_email: 'github-actions@users.noreply.github.com'
+
+      - name: 📤 ایجاد Release و آپلود آرشیوها
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "tiktok-${{ github.event.inputs.tiktok_user }}-${{ github.run_number }}"
+          name: "ویدیوهای @${{ github.event.inputs.tiktok_user }} (بسته ${{ github.run_number }})"
+          body: |
+            ## 📦 آرشیو چندبخشی ویدیوهای تیک‌تاک @${{ github.event.inputs.tiktok_user }}
+            - تعداد ویدیوها: تا ${{ github.event.inputs.max_videos }}
+            - فرمت: 7z چندبخشی (با 7-Zip استخراج کنید)
+            - نحوهٔ استخراج: همهٔ فایل‌ها را دانلود کرده، سپس روی فایل `.7z.001` راست‌کلیک کرده و با 7-Zip استخراج کنید.
+          files: release_assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📤 ذخیرهٔ archive.txt در مخزن
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add archive_*.txt
+          git commit -m "📌 به‌روزرسانی archive تیک‌تاک" || echo "بدون تغییر"
+          git pull --rebase origin main 2>/dev/null || true
+          git push origin main || echo "Push ممکن است خطا دهد"
