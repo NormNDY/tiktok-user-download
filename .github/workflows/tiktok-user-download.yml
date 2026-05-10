@@ -1,31 +1,33 @@
-name: "🎵 TikTok User Downloader + Gallery"
+name: "🎵 TikTok Downloader (No Watermark, High Quality)"
 
 on:
   workflow_dispatch:
     inputs:
       tiktok_user:
-        description: '👤 نام کاربری تیک‌تاک (بدون @)'
-        required: true
+        description: '👤 نام کاربری (بدون @) – برای دانلود آخرین ویدیوها'
+        required: false
         type: string
       max_videos:
-        description: '🔢 حداکثر تعداد ویدیو'
-        required: true
-        default: '30'
+        description: '🔢 تعداد ویدیوهای کاربر (حداکثر ۲۰)'
+        required: false
+        default: '10'
         type: choice
-        options: ['10', '30', '50', '100', '200', '500', '1000']
+        options: ['1', '3', '5', '10', '15', '20']
+      single_url:
+        description: '🔗 لینک یک ویدیوی تیک‌تاک'
+        required: false
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
-  tiktok-download-and-release:
+  tiktok-download:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
 
     steps:
       - name: 📥 Checkout repository
@@ -37,7 +39,7 @@ jobs:
       - name: 🔧 نصب ابزارها
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg p7zip-full curl jq python3-pip
+          sudo apt-get install -y -qq ffmpeg curl jq python3-pip
           pip3 install -q yt-dlp
 
       - name: 🛡️ راه‌اندازی WARP (عبور از تحریم)
@@ -56,175 +58,93 @@ jobs:
           fi
 
       - name: 📥 دانلود ویدیوهای کاربر
+        if: github.event.inputs.tiktok_user != ''
         env:
-          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}
-          MAX_VIDEOS: ${{ github.event.inputs.max_videos }}
+          USER: ${{ github.event.inputs.tiktok_user }}
+          MAX: ${{ github.event.inputs.max_videos }}
         run: |
-          mkdir -p downloads thumbnails _site
+          set -euo pipefail
           PROXY_ARG=""
           if [ "${WARP_READY:-false}" = "true" ]; then
             PROXY_ARG="--proxy socks5://127.0.0.1:1080"
           fi
 
-          DOWNLOAD_DIR="downloads/${TIKTOK_USER}"
-          mkdir -p "$DOWNLOAD_DIR"
+          TARGET_DIR="raw_tiktok/${USER}"
+          mkdir -p "$TARGET_DIR"
 
-          ARCHIVE_FILE="archive_${TIKTOK_USER}.txt"
-          if [ -f "$ARCHIVE_FILE" ]; then
-            cp "$ARCHIVE_FILE" /tmp/archive.txt
-            echo "📂 آرشیو قبلی پیدا شد، ادامه دانلود از آخرین نقطه"
-          else
-            touch /tmp/archive.txt
-          fi
+          echo "▸ شروع دانلود ${MAX} ویدیوی آخر @${USER} ..."
 
-          echo "▸ شروع دانلود ویدیوها از @${TIKTOK_USER} ..."
-
+          set +e
           yt-dlp --verbose \
             $PROXY_ARG \
-            --format "bestvideo+bestaudio/best" \
+            -f "bestvideo+bestaudio/best" \
             --merge-output-format mp4 \
-            --output "${DOWNLOAD_DIR}/%(id)s.%(ext)s" \
-            --write-thumbnail --convert-thumbnails jpg \
-            --download-archive /tmp/archive.txt \
-            --playlist-end ${MAX_VIDEOS} \
+            --output "${TARGET_DIR}/%(id)s.%(ext)s" \
+            --no-write-thumbnail \
             --no-playlist-reverse \
-            --no-part \
-            --retries 10 \
-            --fragment-retries 10 \
-            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0" \
-            "https://www.tiktok.com/@${TIKTOK_USER}" || {
-              echo "⚠️ دانلود به پایان رسید (ممکن است برخی ویدیوها از دسترس خارج شده باشند)"
-            }
+            --playlist-end "${MAX}" \
+            --extractor-args "tiktok:no_watermark=1;api_hostname=api16-normal-c-useast1a.tiktokv.com" \
+            --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" \
+            "https://www.tiktok.com/@${USER}" 2>&1 | tee /tmp/tiktok-user.log
+          EXIT_CODE=$?
+          set -e
 
-          cp /tmp/archive.txt "$ARCHIVE_FILE"
-          find downloads -name "*.jpg" -exec cp {} thumbnails/ \;
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "⚠️ دانلود با خطا مواجه شد. ۲۰ خط آخر لاگ:"
+            tail -20 /tmp/tiktok-user.log
+          else
+            echo "✅ دانلود کامل شد."
+          fi
 
-          > /tmp/manifest.txt
-          for video in "${DOWNLOAD_DIR}"/*.mp4; do
-            [ -f "$video" ] || continue
-            vid_id=$(basename "$video" .mp4)
-            original_url="https://www.tiktok.com/@${TIKTOK_USER}/video/${vid_id}"
-            title="ویدیوی ${vid_id}"
-            echo "${vid_id}|${title}|${original_url}" >> /tmp/manifest.txt
+      - name: 📥 دانلود ویدیوی تکی (لینک)
+        if: github.event.inputs.single_url != ''
+        env:
+          SINGLE_URL: ${{ github.event.inputs.single_url }}
+        run: |
+          set -euo pipefail
+          PROXY_ARG=""
+          if [ "${WARP_READY:-false}" = "true" ]; then
+            PROXY_ARG="--proxy socks5://127.0.0.1:1080"
+          fi
+
+          TARGET_DIR="raw_tiktok/single"
+          mkdir -p "$TARGET_DIR"
+
+          echo "▸ دانلود ویدیوی تکی: ${SINGLE_URL}"
+
+          set +e
+          yt-dlp --verbose \
+            $PROXY_ARG \
+            -f "bestvideo+bestaudio/best" \
+            --merge-output-format mp4 \
+            --output "${TARGET_DIR}/%(id)s.%(ext)s" \
+            --no-write-thumbnail \
+            --extractor-args "tiktok:no_watermark=1;api_hostname=api16-normal-c-useast1a.tiktokv.com" \
+            --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" \
+            "${SINGLE_URL}" 2>&1 | tee /tmp/tiktok-single.log
+          EXIT_CODE=$?
+          set -e
+
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "⚠️ خطا در دانلود تکی. لاگ:"
+            tail -20 /tmp/tiktok-single.log
+          else
+            echo "✅ دانلود تکی موفق."
+          fi
+
+      - name: 📋 نمایش لینک‌های Raw
+        run: |
+          echo "--- لینک‌های Raw دانلود ---"
+          find raw_tiktok -type f -name "*.mp4" | while read -r FILE; do
+            ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$FILE")
+            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/${ENCODED}"
           done
 
-          echo "✅ دانلود به پایان رسید. فایل manifest آماده است."
-
-      - name: 📦 ساخت آرشیوهای فشرده (بخش‌های ۱.۹GB)
-        env:
-          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}   # ⬅️ اضافه شدن متغیر
-        run: |
-          cd downloads
-          # بسته‌بندی همه ویدیوها و تامبنیل‌های کاربر
-          # افزودن || true تا در صورت خطا متوقف نشود
-          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" "${TIKTOK_USER}/"* || {
-            echo "⚠️ 7z با خطا مواجه شد، اما ادامه می‌دهیم"
-          }
-          cd ..
-
-          mkdir -p release_assets
-          mv ${TIKTOK_USER}_videos.7z* release_assets/ 2>/dev/null || true
-
-      - name: 🖼️ ساخت گالری HTML
-        run: |
-          cat > /tmp/gen_gallery.py << 'EOF'
-          import os
-
-          user = os.environ['TIKTOK_USER']
-          repo = os.environ['GITHUB_REPOSITORY']
-
-          videos = []
-          if os.path.exists('/tmp/manifest.txt'):
-              with open('/tmp/manifest.txt', 'r', encoding='utf-8') as f:
-                  for line in f:
-                      line = line.strip()
-                      if not line:
-                          continue
-                      parts = line.split('|')
-                      if len(parts) >= 3:
-                          vid_id, title, url = parts[0], parts[1], parts[2]
-                          thumb = f"thumbnails/{vid_id}.jpg"
-                          videos.append((vid_id, title, url, thumb))
-
-          html = f"""<!DOCTYPE html>
-          <html dir="rtl">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>گالری ویدیوهای @{user}</title>
-              <style>
-                  body {{ font-family: Tahoma, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }}
-                  h1 {{ color: #58a6ff; text-align: center; }}
-                  .gallery {{ max-width: 1000px; margin: 0 auto; display: flex; flex-wrap: wrap; justify-content: center; gap: 20px; }}
-                  .card {{ background: #161b22; border-radius: 12px; overflow: hidden; width: 250px; box-shadow: 0 4px 10px rgba(0,0,0,0.4); }}
-                  .card img {{ width: 100%; height: 350px; object-fit: cover; }}
-                  .card .info {{ padding: 10px; }}
-                  .card .info a {{ color: #58a6ff; text-decoration: none; font-size: 0.9em; }}
-                  @media (max-width: 600px) {{ .card {{ width: 100%; }} }}
-              </style>
-          </head>
-          <body>
-              <h1>🎵 @{user} – ویدیوهای دانلودشده</h1>
-              <p style="text-align:center; color:#8b949e;">برای دانلود همهٔ ویدیوها به <a href="https://github.com/{repo}/releases" target="_blank">بخش Releases</a> مراجعه کنید.</p>
-              <div class="gallery">
-          """
-
-          if not videos:
-              html += "<p>هنوز ویدیویی دانلود نشده است. لطفاً بعد از دانلود دوباره بررسی کنید.</p>"
-          else:
-              for vid, title, url, thumb in videos:
-                  thumb_path = thumb if os.path.exists(thumb) else 'https://via.placeholder.com/250x350?text=No+Preview'
-                  html += f"""
-                  <div class="card">
-                      <img src="{thumb_path}" alt="{title}">
-                      <div class="info">
-                          <a href="{url}" target="_blank">{title}</a>
-                      </div>
-                  </div>"""
-
-          html += """
-              </div>
-          </body>
-          </html>"""
-
-          os.makedirs('_site', exist_ok=True)
-          with open('_site/index.html', 'w', encoding='utf-8') as f:
-              f.write(html)
-          print("✅ گالری ساخته شد.")
-          EOF
-
-          python3 /tmp/gen_gallery.py
-        env:
-          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}
-
-      - name: 🚀 انتشار گالری روی GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./_site
-          publish_branch: gh-pages
-          user_name: 'github-actions'
-          user_email: 'github-actions@users.noreply.github.com'
-
-      - name: 📤 ایجاد Release و آپلود آرشیوها
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: "tiktok-${{ github.event.inputs.tiktok_user }}-${{ github.run_number }}"
-          name: "ویدیوهای @${{ github.event.inputs.tiktok_user }} (بسته ${{ github.run_number }})"
-          body: |
-            ## 📦 آرشیو چندبخشی ویدیوهای تیک‌تاک @${{ github.event.inputs.tiktok_user }}
-            - تعداد ویدیوها: تا ${{ github.event.inputs.max_videos }}
-            - فرمت: 7z چندبخشی (با 7-Zip استخراج کنید)
-            - **راهنما:** همهٔ فایل‌ها را در یک پوشه دانلود کنید، سپس روی فایل با پسوند `.7z.001` راست‌کلیک کرده و با 7-Zip گزینهٔ «Extract Here» را بزنید.
-          files: release_assets/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 📤 ذخیرهٔ archive.txt در مخزن
+      - name: 📤 Push فایل‌ها به مخزن
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add archive_*.txt
-          git commit -m "📌 به‌روزرسانی آرشیو دانلود تیک‌تاک" || echo "بدون تغییر"
+          git add raw_tiktok/
+          git commit -m "🎵 آپلود ویدیوهای تیک‌تاک" || echo "بدون تغییر"
           git pull --rebase origin main 2>/dev/null || true
-          git push origin main || echo "Push ممکن است خطا دهد اما ادامه می‌دهیم"
+          git push origin main
