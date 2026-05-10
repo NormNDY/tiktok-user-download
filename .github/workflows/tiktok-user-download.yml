@@ -79,7 +79,6 @@ jobs:
 
           echo "▸ شروع دانلود ویدیوها از @${TIKTOK_USER} ..."
 
-          # دانلود ویدیوها + استخراج تامبنیل
           yt-dlp --verbose \
             $PROXY_ARG \
             --format "bestvideo+bestaudio/best" \
@@ -97,19 +96,14 @@ jobs:
               echo "⚠️ دانلود به پایان رسید (ممکن است برخی ویدیوها از دسترس خارج شده باشند)"
             }
 
-          # کپی آرشیو جدید
           cp /tmp/archive.txt "$ARCHIVE_FILE"
-
-          # انتقال تامبنیل‌ها به پوشه thumbnails
           find downloads -name "*.jpg" -exec cp {} thumbnails/ \;
 
-          # ساخت فایل manifest برای گالری
           > /tmp/manifest.txt
           for video in "${DOWNLOAD_DIR}"/*.mp4; do
             [ -f "$video" ] || continue
             vid_id=$(basename "$video" .mp4)
             original_url="https://www.tiktok.com/@${TIKTOK_USER}/video/${vid_id}"
-            # برای داشتن عنوان، از نام خود ویدیو استفاده می‌کنیم (محدود)
             title="ویدیوی ${vid_id}"
             echo "${vid_id}|${title}|${original_url}" >> /tmp/manifest.txt
           done
@@ -117,18 +111,22 @@ jobs:
           echo "✅ دانلود به پایان رسید. فایل manifest آماده است."
 
       - name: 📦 ساخت آرشیوهای فشرده (بخش‌های ۱.۹GB)
+        env:
+          TIKTOK_USER: ${{ github.event.inputs.tiktok_user }}   # ⬅️ اضافه شدن متغیر
         run: |
           cd downloads
           # بسته‌بندی همه ویدیوها و تامبنیل‌های کاربر
-          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" "${TIKTOK_USER}/"*
+          # افزودن || true تا در صورت خطا متوقف نشود
+          7z a -t7z -v1900m -mx1 "../${TIKTOK_USER}_videos.7z" "${TIKTOK_USER}/"* || {
+            echo "⚠️ 7z با خطا مواجه شد، اما ادامه می‌دهیم"
+          }
           cd ..
 
           mkdir -p release_assets
           mv ${TIKTOK_USER}_videos.7z* release_assets/ 2>/dev/null || true
 
-      - name: 🖼️ ساخت گالری HTML (اصلاح‌شده)
+      - name: 🖼️ ساخت گالری HTML
         run: |
-          # نوشتن اسکریپت Python در یک فایل موقت
           cat > /tmp/gen_gallery.py << 'EOF'
           import os
 
