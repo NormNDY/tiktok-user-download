@@ -1,4 +1,4 @@
-name: "🎵 TikTok Downloader (No Watermark, High Quality)"
+name: "🎵 TikTok Downloader (No Watermark, High Quality) - Debug"
 
 on:
   workflow_dispatch:
@@ -96,6 +96,10 @@ jobs:
             echo "✅ دانلود کامل شد."
           fi
 
+          # شمارش فایل‌های دانلودشده
+          DL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
+          echo "📊 تعداد فایل‌های دانلودشده: ${DL_COUNT}"
+
       - name: 📥 دانلود ویدیوی تکی (لینک)
         if: github.event.inputs.single_url != ''
         env:
@@ -131,20 +135,35 @@ jobs:
           else
             echo "✅ دانلود تکی موفق."
           fi
+          DL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
+          echo "📊 فایل‌های موجود: ${DL_COUNT}"
 
-      - name: 📋 نمایش لینک‌های Raw
+      - name: 🩺 بررسی پوشه raw_tiktok
         run: |
-          echo "--- لینک‌های Raw دانلود ---"
-          find raw_tiktok -type f -name "*.mp4" | while read -r FILE; do
-            ENCODED=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$FILE")
-            echo "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/${ENCODED}"
-          done
+          echo "محتوای پوشه raw_tiktok (در صورت وجود):"
+          find raw_tiktok -type f 2>/dev/null || echo "پوشه وجود ندارد."
 
       - name: 📤 Push فایل‌ها به مخزن
         run: |
+          set -x
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add raw_tiktok/
-          git commit -m "🎵 آپلود ویدیوهای تیک‌تاک" || echo "بدون تغییر"
-          git pull --rebase origin main 2>/dev/null || true
-          git push origin main
+
+          if [ -d "raw_tiktok" ] && [ "$(find raw_tiktok -type f | wc -l)" -gt 0 ]; then
+            git add raw_tiktok/
+            if ! git diff --cached --quiet; then
+              git commit -m "🎵 آپلود ویدیوهای تیک‌تاک"
+              git pull --rebase origin main 2>/dev/null || true
+              git push origin main
+            else
+              echo "هیچ فایلی برای commit وجود ندارد."
+            fi
+          else
+            echo "⚠️ پوشه raw_tiktok خالی است یا وجود ندارد. یک فایل placeholder ایجاد می‌شود."
+            mkdir -p raw_tiktok
+            echo "این فایل به دلیل خالی بودن پوشه ایجاد شده است. لطفاً تنظیمات را بررسی کنید." > raw_tiktok/PLACEHOLDER.md
+            git add raw_tiktok/
+            git commit -m "افزودن placeholder برای raw_tiktok"
+            git pull --rebase origin main 2>/dev/null || true
+            git push origin main
+          fi
