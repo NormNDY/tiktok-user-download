@@ -71,13 +71,11 @@ jobs:
           set -euo pipefail
           TARGET_DIR="raw_tiktok/${USER}"
           mkdir -p "$TARGET_DIR"
-          # این فایل لاگ همه چیز را ثبت می‌کند
           LOG_FILE="$TARGET_DIR/debug.log"
           echo "===== شروع دانلود @${USER} در $(date) =====" > "$LOG_FILE"
 
           PROXY="${{ steps.proxy.outputs.proxy_arg }}"
 
-          # سه استراتژی با UA و تنظیمات مختلف
           STRATEGIES=(
             "1|bestvideo+bestaudio/best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|tiktok:no_watermark=1"
             "2|bestvideo+bestaudio/best|com.zhiliaoapp.musically/2023103030 (Linux; U; Android 13)|"
@@ -116,17 +114,7 @@ jobs:
 
           FINAL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
           if [ $FINAL_COUNT -eq 0 ]; then
-            # نوشتن راهنمایی در README
-            cat > "$TARGET_DIR/README.md" << 'EOFREADME'
-# ❌ دانلود ناموفق
-
-هیچ ویدیویی دریافت نشد. دلایل احتمالی:
-1. **اکانت خصوصی است** → فقط اکانت‌های عمومی پشتیبانی می‌شوند.
-2. **مسدودیت آی‌پی** → حتی با WARP هم ممکن است بلاک شوید. از پروکسی دستی استفاده کنید.
-3. **نام کاربری اشتباه** → دوباره بررسی کنید.
-
-📄 **فایل `debug.log`** را باز کنید و خطاهای yt-dlp را ببینید.
-EOFREADME
+            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد. دلایل احتمالی:\n1. اکانت خصوصی است\n2. مسدودیت آی‌پی\n3. نام کاربری اشتباه\n\nفایل \`debug.log\` را برای جزئیات بررسی کنید.\n" > "$TARGET_DIR/README.md"
             echo "❌ هیچ ویدیویی دانلود نشد. فایل debug.log برای بررسی ایجاد شد." | tee -a "$LOG_FILE"
           else
             echo "# 🎵 ویدیوهای @${USER}" > "$TARGET_DIR/README.md"
