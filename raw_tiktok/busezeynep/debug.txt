@@ -1,0 +1,71 @@
+
+========== استراتژی ۱ (no_watermark + UA آیفون) ==========
+[debug] Command-line config: ['--verbose', '--proxy', 'socks5://127.0.0.1:1080', '-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4', '--output', 'raw_tiktok/busezeynep/%(id)s.%(ext)s', '--no-playlist-reverse', '--playlist-end', '1', '--extractor-args', 'tiktok:no_watermark=1;api_hostname=api16-normal-c-useast1a.tiktokv.com', '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1', 'https://www.tiktok.com/@busezeynep']
+[debug] Encodings: locale UTF-8, fs utf-8, pref UTF-8, out utf-8 (No ANSI), error utf-8 (No ANSI), screen utf-8 (No ANSI)
+[debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip)
+[debug] Python 3.12.3 (CPython x86_64 64bit) - Linux-6.17.0-1010-azure-x86_64-with-glibc2.39 (OpenSSL 3.0.13 30 Jan 2024, glibc 2.39)
+[debug] exe versions: ffmpeg 6.1.1 (setts), ffprobe 6.1.1
+[debug] Optional libraries: certifi-2023.11.17, requests-2.31.0 (unsupported), sqlite3-3.45.1, urllib3-2.0.7
+[debug] JS runtimes: none
+[debug] Proxy map: {'all': 'socks5://127.0.0.1:1080'}
+[debug] Request Handlers: urllib
+[debug] Plugin directories: none
+[debug] Loaded 1864 extractors
+[tiktok:user] Extracting URL: https://www.tiktok.com/@busezeynep
+[tiktok:user] busezeynep: Downloading user webpage
+WARNING: [tiktok:user] The extractor is attempting impersonation, but no impersonate target is available. If you encounter errors, then see  https://github.com/yt-dlp/yt-dlp#impersonation  for information on installing the required dependencies
+[download] Downloading playlist: busezeynep
+[tiktok:user] busezeynep: Downloading page 1
+[tiktok:user] Playlist busezeynep: Downloading 1 items
+[download] Downloading item 1 of 1
+[TikTok] Extracting URL: https://www.tiktok.com/@busezeynep/video/7638308599793552658
+[TikTok] 7638308599793552658: Downloading webpage
+WARNING: [TikTok] The extractor is attempting impersonation, but no impersonate target is available. If you encounter errors, then see  https://github.com/yt-dlp/yt-dlp#impersonation  for information on installing the required dependencies
+ERROR: [TikTok] 7638308599793552658: Video not available, status code 0; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U
+  File "/home/runner/.local/lib/python3.12/site-packages/yt_dlp/extractor/common.py", line 765, in extract
+    ie_result = self._real_extract(url)
+                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/.local/lib/python3.12/site-packages/yt_dlp/extractor/tiktok.py", line 995, in _real_extract
+    raise ExtractorError(f'Video not available, status code {status}', video_id=video_id)
+
+[download] Finished downloading playlist: busezeynep
+خروجی استراتژی ۱: 1
+========== استراتژی ۲ (بدون no_watermark + UA اندروید) ==========
+[debug] Command-line config: ['--verbose', '--proxy', 'socks5://127.0.0.1:1080', '-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4', '--output', 'raw_tiktok/busezeynep/%(id)s.%(ext)s', '--no-playlist-reverse', '--playlist-end', '1', '--user-agent', 'com.zhiliaoapp.musically/2023103030 (Linux; U; Android 13; en_US; SM-S9180; Build/TP1A.220624.014)', 'https://www.tiktok.com/@busezeynep']
+[debug] Encodings: locale UTF-8, fs utf-8, pref UTF-8, out utf-8 (No ANSI), error utf-8 (No ANSI), screen utf-8 (No ANSI)
+[debug] yt-dlp version stable@2026.03.17 from yt-dlp/yt-dlp [04d6974f5] (pip)
+[debug] Python 3.12.3 (CPython x86_64 64bit) - Linux-6.17.0-1010-azure-x86_64-with-glibc2.39 (OpenSSL 3.0.13 30 Jan 2024, glibc 2.39)
+[debug] exe versions: ffmpeg 6.1.1 (setts), ffprobe 6.1.1
+[debug] Optional libraries: certifi-2023.11.17, requests-2.31.0 (unsupported), sqlite3-3.45.1, urllib3-2.0.7
+[debug] JS runtimes: none
+[debug] Proxy map: {'all': 'socks5://127.0.0.1:1080'}
+[debug] Request Handlers: urllib
+[debug] Plugin directories: none
+[debug] Loaded 1864 extractors
+[tiktok:user] Extracting URL: https://www.tiktok.com/@busezeynep
+[tiktok:user] busezeynep: Downloading user webpage
+WARNING: [tiktok:user] The extractor is attempting impersonation, but no impersonate target is available. If you encounter errors, then see  https://github.com/yt-dlp/yt-dlp#impersonation  for information on installing the required dependencies
+[download] Downloading playlist: busezeynep
+[tiktok:user] busezeynep: Downloading page 1
+[tiktok:user] Playlist busezeynep: Downloading 1 items
+[download] Downloading item 1 of 1
+[TikTok] Extracting URL: https://www.tiktok.com/@busezeynep/video/7638308599793552658
+[TikTok] 7638308599793552658: Downloading webpage
+WARNING: [TikTok] The extractor is attempting impersonation, but no impersonate target is available. If you encounter errors, then see  https://github.com/yt-dlp/yt-dlp#impersonation  for information on installing the required dependencies
+ERROR: [TikTok] 7638308599793552658: Video not available, status code 0; please report this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using  yt-dlp -U
+  File "/home/runner/.local/lib/python3.12/site-packages/yt_dlp/extractor/common.py", line 765, in extract
+    ie_result = self._real_extract(url)
+                ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/.local/lib/python3.12/site-packages/yt_dlp/extractor/tiktok.py", line 995, in _real_extract
+    raise ExtractorError(f'Video not available, status code {status}', video_id=video_id)
+
+[download] Finished downloading playlist: busezeynep
+خروجی استراتژی ۲: 1
+========== استراتژی ۳ (بدون پروکسی + api_hostname دیگر) ==========
+[debug] Command-line config: ['--verbose', '--no-proxy', '-f', 'bestvideo+bestaudio/best', '--merge-output-format', 'mp4', '--output', 'raw_tiktok/busezeynep/%(id)s.%(ext)s', '--no-playlist-reverse', '--playlist-end', '1', '--extractor-args', 'tiktok:no_watermark=1;api_hostname=api-h2.tiktokv.com', '--user-agent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1', 'https://www.tiktok.com/@busezeynep']
+
+Usage: yt-dlp [OPTIONS] URL [URL...]
+
+yt-dlp: error: no such option: --no-proxy
+خروجی استراتژی ۳: 2
+لاگ کامل در فایل debug.txt ذخیره شد.
