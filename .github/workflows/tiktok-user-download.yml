@@ -1,4 +1,4 @@
-name: "🎵 TikTok Downloader – Fixed Impersonation"
+name: "🎵 TikTok Downloader – Last Resort"
 
 on:
   workflow_dispatch:
@@ -6,115 +6,68 @@ on:
       tiktok_user:
         description: '👤 نام کاربری تیک‌تاک (عمومی)'
         required: true
-        type: string
       max_videos:
-        description: '🔢 تعداد ویدیوها (حداکثر ۲۰)'
+        description: '🔢 تعداد ویدیوها'
         required: true
         default: '3'
         type: choice
         options: ['1', '3', '5', '10', '20']
       custom_proxy:
-        description: '🌐 پروکسی دستی (اختیاری)'
+        description: '🌐 پروکسی دستی (مثال socks5://1.2.3.4:1080)'
         required: false
-        type: string
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
-permissions:
-  contents: write
 
 jobs:
-  tiktok-download:
+  tiktok:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-
+    timeout-minutes: 30
     steps:
-      - name: 📥 Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🔧 نصب ابزارها و کتابخانه‌های لازم
+      - name: نصب ابزارها
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg curl python3-pip
-          pip3 install -q yt-dlp
-          # نصب کتابخانه‌های impersonation (ضروری برای عبور از بلاک تیک‌تاک)
-          pip3 install -q curl-cffi
-          # همچنین نصب brotli ممکن است کمک کند
-          pip3 install -q brotli
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg curl
+          pip3 install -q yt-dlp curl-cffi brotli
 
-      - name: 🛡️ تنظیم پروکسی (WARP یا دستی)
+      - name: تنظیم پروکسی
         id: proxy
         run: |
-          if [ -n "$CUSTOM_PROXY" ]; then
-            echo "🔹 پروکسی دستی: $CUSTOM_PROXY"
-            echo "proxy_arg=--proxy $CUSTOM_PROXY" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          echo "🛡️ راه‌اندازی WARP..."
-          docker run -d --name warp --restart=always \
-            -p 1080:1080 --cap-add NET_ADMIN \
-            -e WARP_ENABLE_WARP=yes \
-            caomingjun/warp
-          sleep 25
-          if curl -x socks5h://127.0.0.1:1080 -s --max-time 10 https://www.tiktok.com > /dev/null; then
-            echo "proxy_arg=--proxy socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
-            echo "✅ WARP فعال"
+          if [ -n "$CUSTOM" ]; then
+            echo "proxy=--proxy $CUSTOM" >> $GITHUB_OUTPUT
           else
-            echo "proxy_arg=--no-proxy" >> $GITHUB_OUTPUT
-            echo "⚠️ WARP کار نمی‌کند"
+            docker run -d --name warp -p 1080:1080 --cap-add NET_ADMIN -e WARP_ENABLE_WARP=yes caomingjun/warp
+            sleep 25
+            if curl -x socks5h://127.0.0.1:1080 -s --max-time 8 https://www.tiktok.com > /dev/null; then
+              echo "proxy=--proxy socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
+            else
+              echo "proxy=--no-proxy" >> $GITHUB_OUTPUT
+            fi
           fi
         env:
-          CUSTOM_PROXY: ${{ github.event.inputs.custom_proxy }}
+          CUSTOM: ${{ github.event.inputs.custom_proxy }}
 
-      - name: 📥 دانلود ویدیوها (با impersonation)
+      - name: دانلود
+        run: |
+          mkdir -p "raw_tiktok/$USER"
+          echo "شروع دانلود..." > "raw_tiktok/$USER/log.txt"
+          yt-dlp -v \
+            ${{ steps.proxy.outputs.proxy }} \
+            -f "bestvideo+bestaudio/best" \
+            --merge-output-format mp4 \
+            -o "raw_tiktok/$USER/%(id)s.%(ext)s" \
+            --write-thumbnail --convert-thumbnails jpg \
+            --playlist-end $MAX \
+            --retries 10 \
+            --impersonate chrome \
+            "https://www.tiktok.com/@$USER" 2>&1 | tee -a "raw_tiktok/$USER/log.txt"
+          echo "تعداد ویدیوها: $(find raw_tiktok/$USER -name '*.mp4' | wc -l)" >> "raw_tiktok/$USER/README.md"
         env:
           USER: ${{ github.event.inputs.tiktok_user }}
           MAX: ${{ github.event.inputs.max_videos }}
+
+      - name: Push
         run: |
-          set -euo pipefail
-          TARGET_DIR="raw_tiktok/${USER}"
-          mkdir -p "$TARGET_DIR"
-          LOG_FILE="$TARGET_DIR/debug.log"
-          echo "===== شروع دانلود @${USER} در $(date) =====" > "$LOG_FILE"
-
-          PROXY="${{ steps.proxy.outputs.proxy_arg }}"
-
-          # استفاده از impersonate برای شبیه‌سازی مرورگر (حل مشکل status code 0)
-          yt-dlp --verbose \
-            $PROXY \
-            -f "bestvideo+bestaudio/best" \
-            --merge-output-format mp4 \
-            --output "${TARGET_DIR}/%(id)s.%(ext)s" \
-            --write-thumbnail --convert-thumbnails jpg \
-            --playlist-end "$MAX" \
-            --retries 8 \
-            --sleep-interval 2 --max-sleep-interval 5 \
-            --impersonate chrome \
-            --extractor-args "tiktok:no_watermark=1" \
-            "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE" || echo "⚠️ دانلود با خطا خاتمه یافت"
-
-          FINAL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
-          if [ $FINAL_COUNT -eq 0 ]; then
-            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد.\nفایل \`debug.log\` را برای جزئیات بررسی کنید.\n" > "$TARGET_DIR/README.md"
-            echo "❌ هیچ ویدیویی دانلود نشد." | tee -a "$LOG_FILE"
-          else
-            echo "# 🎵 ویدیوهای @${USER}" > "$TARGET_DIR/README.md"
-            echo "تعداد: $FINAL_COUNT" >> "$TARGET_DIR/README.md"
-            echo "✅ $FINAL_COUNT ویدیو ذخیره شد." | tee -a "$LOG_FILE"
-          fi
-
-      - name: 📤 Push پوشه و لاگ‌ها
-        if: always()
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
           git add raw_tiktok/
-          if ! git diff --cached --quiet; then
-            TOTAL=$(find raw_tiktok -name "*.mp4" | wc -l)
-            git commit -m "🎵 TikTok @${{ github.event.inputs.tiktok_user }} ($TOTAL ویدیو)"
-            git pull --rebase origin main 2>/dev/null || true
-            git push origin main
-          else
-            echo "بدون تغییر"
-          fi
+          git diff --cached --quiet || {
+            git config user.name "ci" && git config user.email "ci@github.com"
+            git commit -m "tiktok @$USER" && git pull --rebase && git push
+          }
