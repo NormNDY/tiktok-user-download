@@ -1,4 +1,4 @@
-name: "🎵 TikTok Downloader – Final Robust"
+name: "🎵 TikTok Downloader – Fixed Impersonation Compatibility"
 
 on:
   workflow_dispatch:
@@ -38,8 +38,9 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg curl python3-pip
           pip3 install -q yt-dlp
-          # کتابخانه‌های لازم برای impersonation (حل مشکل "status code 0")
-          pip3 install -q curl-cffi brotli
+          # نصب curl-cffi نسخهٔ 0.5.10 که با yt-dlp سازگار است
+          pip3 install -q 'curl_cffi==0.5.10' || echo "⚠️ نصب curl-cffi با خطا مواجه شد. ادامه بدون impersonation."
+          pip3 install -q brotli || true
 
       - name: 🛡️ تنظیم پروکسی (WARP یا دستی)
         id: proxy
@@ -59,13 +60,13 @@ jobs:
             echo "proxy_arg=--proxy socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
             echo "✅ WARP فعال"
           else
-            echo "proxy_arg=--no-proxy" >> $GITHUB_OUTPUT
-            echo "⚠️ WARP پاسخگو نیست، تلاش بدون پروکسی"
+            echo "proxy_arg=" >> $GITHUB_OUTPUT
+            echo "⚠️ WARP در دسترس نیست. ادامه بدون پروکسی."
           fi
         env:
           CUSTOM_PROXY: ${{ github.event.inputs.custom_proxy }}
 
-      - name: 📥 دانلود ویدیوها (با impersonation)
+      - name: 📥 دانلود ویدیوها (با مدیریت هوشمند impersonation)
         env:
           USER: ${{ github.event.inputs.tiktok_user }}
           MAX: ${{ github.event.inputs.max_videos }}
@@ -78,23 +79,56 @@ jobs:
 
           PROXY="${{ steps.proxy.outputs.proxy_arg }}"
 
-          # دانلود با impersonation (chrome) برای عبور از بلاک
-          yt-dlp --verbose \
-            $PROXY \
-            -f "bestvideo+bestaudio/best" \
-            --merge-output-format mp4 \
-            --output "${TARGET_DIR}/%(id)s.%(ext)s" \
-            --write-thumbnail --convert-thumbnails jpg \
-            --playlist-end "$MAX" \
-            --retries 10 \
-            --impersonate chrome \
-            "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE" || {
-              echo "⚠️ دانلود با خطا خاتمه یافت. لاگ در $LOG_FILE"
-            }
+          # بررسی پشتیبانی از impersonation
+          IMPERSONATE_FLAG=""
+          if yt-dlp --list-impersonate-targets 2>/dev/null | grep -q chrome; then
+            IMPERSONATE_FLAG="--impersonate chrome"
+            echo "✅ chrome impersonation پشتیبانی می‌شود." | tee -a "$LOG_FILE"
+          else
+            echo "⚠️ impersonation در دسترس نیست. ادامه بدون آن." | tee -a "$LOG_FILE"
+          fi
+
+          # استراتژی‌های مختلف
+          STRATEGIES=(
+            "bestvideo+bestaudio/best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|tiktok:no_watermark=1"
+            "bestvideo+bestaudio/best|com.zhiliaoapp.musically/2023103030 (Linux; U; Android 13)|"
+            "best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|"
+          )
+
+          for strat in "${STRATEGIES[@]}"; do
+            IFS='|' read -r FORMAT UA EXTR <<< "$strat"
+            echo "▸ تلاش: $FORMAT با UA اختصاصی" | tee -a "$LOG_FILE"
+
+            ARGS=(
+              --verbose
+              -f "$FORMAT"
+              --merge-output-format mp4
+              --output "${TARGET_DIR}/%(id)s.%(ext)s"
+              --write-thumbnail --convert-thumbnails jpg
+              --playlist-end "$MAX"
+              --retries 10
+              --user-agent "$UA"
+            )
+            [ -n "$PROXY" ] && ARGS+=( $PROXY )
+            [ -n "$IMPERSONATE_FLAG" ] && ARGS+=( "$IMPERSONATE_FLAG" )
+            [ -n "$EXTR" ] && ARGS+=( --extractor-args "$EXTR" )
+
+            set +e
+            yt-dlp "${ARGS[@]}" "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE"
+            RES=$?
+            set -e
+
+            COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
+            if [ $COUNT -gt 0 ]; then
+              echo "✅ موفقیت با این استراتژی ($COUNT ویدیو)" | tee -a "$LOG_FILE"
+              break
+            fi
+            echo "⚠️ این استراتژی شکست خورد." | tee -a "$LOG_FILE"
+          done
 
           FINAL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
           if [ $FINAL_COUNT -eq 0 ]; then
-            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد.\nفایل \`debug.log\` را برای جزئیات بررسی کنید.\n" > "$TARGET_DIR/README.md"
+            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد.\nفایل \`debug.log\` را بررسی کنید.\n" > "$TARGET_DIR/README.md"
             echo "❌ هیچ ویدیویی دانلود نشد." | tee -a "$LOG_FILE"
           else
             echo "# 🎵 ویدیوهای @${USER}" > "$TARGET_DIR/README.md"
@@ -102,41 +136,32 @@ jobs:
             echo "✅ $FINAL_COUNT ویدیو ذخیره شد." | tee -a "$LOG_FILE"
           fi
 
-      - name: 📤 Push پوشه و لاگ‌ها (مقاوم در برابر خطا)
+      - name: 📤 Push (مقاوم در برابر خطا)
         if: always()
         run: |
           set +e
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-
           git add raw_tiktok/
-
           if ! git diff --cached --quiet; then
             TOTAL=$(find raw_tiktok -name "*.mp4" | wc -l)
             git commit -m "🎵 TikTok @${USER} ($TOTAL ویدیو)"
-            echo "📤 تلاش برای push..."
-
-            # کشیدن آخرین تغییرات (در صورت تداخل، stash می‌کنیم)
             git stash 2>/dev/null || true
             git pull --rebase origin "${GITHUB_REF_NAME}" || {
-              echo "⚠️ خطا در pull، تلاش مستقیم..."
               git rebase --abort 2>/dev/null || true
               git pull origin "${GITHUB_REF_NAME}" --no-rebase || echo "ادامه بدون pull"
             }
             git stash pop 2>/dev/null || true
-
-            # push با ۳ بار تلاش
             for i in 1 2 3; do
               if git push origin "${GITHUB_REF_NAME}"; then
-                echo "✅ Push موفق بود"
+                echo "✅ Push موفق"
                 break
               else
-                echo "⚠️ تلاش $i برای push ناموفق، صبر کنید..."
                 sleep 3
               fi
-            done || echo "❌ Push با شکست مواجه شد (ویدیوها ممکن است ذخیره نشوند)."
+            done || echo "❌ Push شکست خورد"
           else
-            echo "ℹ️ هیچ تغییری برای commit وجود ندارد."
+            echo "ℹ️ بدون تغییر"
           fi
           set -e
         env:
