@@ -1,4 +1,4 @@
-name: "🎵 TikTok Downloader – Full Diagnostic"
+name: "🎵 TikTok Downloader – Fixed Impersonation"
 
 on:
   workflow_dispatch:
@@ -33,11 +33,15 @@ jobs:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🔧 نصب ابزارها
+      - name: 🔧 نصب ابزارها و کتابخانه‌های لازم
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg curl python3-pip
           pip3 install -q yt-dlp
+          # نصب کتابخانه‌های impersonation (ضروری برای عبور از بلاک تیک‌تاک)
+          pip3 install -q curl-cffi
+          # همچنین نصب brotli ممکن است کمک کند
+          pip3 install -q brotli
 
       - name: 🛡️ تنظیم پروکسی (WARP یا دستی)
         id: proxy
@@ -63,7 +67,7 @@ jobs:
         env:
           CUSTOM_PROXY: ${{ github.event.inputs.custom_proxy }}
 
-      - name: 📥 دانلود ویدیوها (همراه با لاگ کامل)
+      - name: 📥 دانلود ویدیوها (با impersonation)
         env:
           USER: ${{ github.event.inputs.tiktok_user }}
           MAX: ${{ github.event.inputs.max_videos }}
@@ -76,46 +80,24 @@ jobs:
 
           PROXY="${{ steps.proxy.outputs.proxy_arg }}"
 
-          STRATEGIES=(
-            "1|bestvideo+bestaudio/best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|tiktok:no_watermark=1"
-            "2|bestvideo+bestaudio/best|com.zhiliaoapp.musically/2023103030 (Linux; U; Android 13)|"
-            "3|best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|"
-          )
-
-          for strat in "${STRATEGIES[@]}"; do
-            IFS='|' read -r NUM FORMAT UA EXTR <<< "$strat"
-            echo "▸ استراتژی $NUM: $FORMAT" | tee -a "$LOG_FILE"
-            EXTR_ARG=()
-            [ -n "$EXTR" ] && EXTR_ARG=(--extractor-args "$EXTR")
-
-            set +e
-            yt-dlp --verbose \
-              $PROXY \
-              -f "$FORMAT" \
-              --merge-output-format mp4 \
-              --output "${TARGET_DIR}/%(id)s.%(ext)s" \
-              --write-thumbnail --convert-thumbnails jpg \
-              --playlist-end "$MAX" \
-              --retries 8 \
-              --sleep-interval 2 --max-sleep-interval 5 \
-              --user-agent "$UA" \
-              "${EXTR_ARG[@]}" \
-              "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE"
-            RES=$?
-            set -e
-
-            COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
-            if [ $COUNT -gt 0 ]; then
-              echo "✅ استراتژی $NUM موفق بود ($COUNT ویدیو)" | tee -a "$LOG_FILE"
-              break
-            fi
-            echo "⚠️ استراتژی $NUM شکست خورد (exit=$RES)" | tee -a "$LOG_FILE"
-          done
+          # استفاده از impersonate برای شبیه‌سازی مرورگر (حل مشکل status code 0)
+          yt-dlp --verbose \
+            $PROXY \
+            -f "bestvideo+bestaudio/best" \
+            --merge-output-format mp4 \
+            --output "${TARGET_DIR}/%(id)s.%(ext)s" \
+            --write-thumbnail --convert-thumbnails jpg \
+            --playlist-end "$MAX" \
+            --retries 8 \
+            --sleep-interval 2 --max-sleep-interval 5 \
+            --impersonate chrome \
+            --extractor-args "tiktok:no_watermark=1" \
+            "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE" || echo "⚠️ دانلود با خطا خاتمه یافت"
 
           FINAL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
           if [ $FINAL_COUNT -eq 0 ]; then
-            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد. دلایل احتمالی:\n1. اکانت خصوصی است\n2. مسدودیت آی‌پی\n3. نام کاربری اشتباه\n\nفایل \`debug.log\` را برای جزئیات بررسی کنید.\n" > "$TARGET_DIR/README.md"
-            echo "❌ هیچ ویدیویی دانلود نشد. فایل debug.log برای بررسی ایجاد شد." | tee -a "$LOG_FILE"
+            printf "# ❌ دانلود ناموفق\n\nهیچ ویدیویی دریافت نشد.\nفایل \`debug.log\` را برای جزئیات بررسی کنید.\n" > "$TARGET_DIR/README.md"
+            echo "❌ هیچ ویدیویی دانلود نشد." | tee -a "$LOG_FILE"
           else
             echo "# 🎵 ویدیوهای @${USER}" > "$TARGET_DIR/README.md"
             echo "تعداد: $FINAL_COUNT" >> "$TARGET_DIR/README.md"
