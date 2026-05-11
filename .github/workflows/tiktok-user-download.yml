@@ -1,4 +1,4 @@
-name: "🎵 TikTok Downloader – Robust & Auto-Proxy"
+name: "🎵 TikTok Downloader – Full Diagnostic"
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       max_videos:
         description: '🔢 تعداد ویدیوها (حداکثر ۲۰)'
         required: true
-        default: '5'
+        default: '3'
         type: choice
         options: ['1', '3', '5', '10', '20']
       custom_proxy:
@@ -43,29 +43,27 @@ jobs:
         id: proxy
         run: |
           if [ -n "$CUSTOM_PROXY" ]; then
-            echo "🔹 استفاده از پروکسی دستی: $CUSTOM_PROXY"
+            echo "🔹 پروکسی دستی: $CUSTOM_PROXY"
             echo "proxy_arg=--proxy $CUSTOM_PROXY" >> $GITHUB_OUTPUT
             exit 0
           fi
-
           echo "🛡️ راه‌اندازی WARP..."
           docker run -d --name warp --restart=always \
             -p 1080:1080 --cap-add NET_ADMIN \
             -e WARP_ENABLE_WARP=yes \
             caomingjun/warp
           sleep 25
-
           if curl -x socks5h://127.0.0.1:1080 -s --max-time 10 https://www.tiktok.com > /dev/null; then
-            echo "✅ WARP فعال"
             echo "proxy_arg=--proxy socks5://127.0.0.1:1080" >> $GITHUB_OUTPUT
+            echo "✅ WARP فعال"
           else
-            echo "⚠️ WARP پاسخگو نیست – دانلود بدون پروکسی (احتمال شکست بالا)"
             echo "proxy_arg=--no-proxy" >> $GITHUB_OUTPUT
+            echo "⚠️ WARP کار نمی‌کند"
           fi
         env:
           CUSTOM_PROXY: ${{ github.event.inputs.custom_proxy }}
 
-      - name: 📥 دانلود ویدیوها (چند استراتژی)
+      - name: 📥 دانلود ویدیوها (همراه با لاگ کامل)
         env:
           USER: ${{ github.event.inputs.tiktok_user }}
           MAX: ${{ github.event.inputs.max_videos }}
@@ -73,11 +71,13 @@ jobs:
           set -euo pipefail
           TARGET_DIR="raw_tiktok/${USER}"
           mkdir -p "$TARGET_DIR"
-          echo "این پوشه برای ویدیوهای @${USER} است." > "$TARGET_DIR/README.md"
+          # این فایل لاگ همه چیز را ثبت می‌کند
+          LOG_FILE="$TARGET_DIR/debug.log"
+          echo "===== شروع دانلود @${USER} در $(date) =====" > "$LOG_FILE"
 
           PROXY="${{ steps.proxy.outputs.proxy_arg }}"
 
-          # سه استراتژی مختلف
+          # سه استراتژی با UA و تنظیمات مختلف
           STRATEGIES=(
             "1|bestvideo+bestaudio/best|Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15|tiktok:no_watermark=1"
             "2|bestvideo+bestaudio/best|com.zhiliaoapp.musically/2023103030 (Linux; U; Android 13)|"
@@ -86,7 +86,7 @@ jobs:
 
           for strat in "${STRATEGIES[@]}"; do
             IFS='|' read -r NUM FORMAT UA EXTR <<< "$strat"
-            echo "▸ استراتژی $NUM: فرمت=$FORMAT"
+            echo "▸ استراتژی $NUM: $FORMAT" | tee -a "$LOG_FILE"
             EXTR_ARG=()
             [ -n "$EXTR" ] && EXTR_ARG=(--extractor-args "$EXTR")
 
@@ -102,38 +102,46 @@ jobs:
               --sleep-interval 2 --max-sleep-interval 5 \
               --user-agent "$UA" \
               "${EXTR_ARG[@]}" \
-              "https://www.tiktok.com/@${USER}" 2>&1 | tee "/tmp/tiktok-strat${NUM}.log"
+              "https://www.tiktok.com/@${USER}" 2>&1 | tee -a "$LOG_FILE"
             RES=$?
             set -e
 
             COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
-            echo "  📊 ویدیوهای دریافتی: $COUNT"
             if [ $COUNT -gt 0 ]; then
-              echo "  ✅ موفقیت با استراتژی $NUM"
+              echo "✅ استراتژی $NUM موفق بود ($COUNT ویدیو)" | tee -a "$LOG_FILE"
               break
             fi
-            echo "  ⚠️ استراتژی $NUM موفق نبود. ۲۰ خط آخر لاگ:"
-            tail -20 "/tmp/tiktok-strat${NUM}.log"
+            echo "⚠️ استراتژی $NUM شکست خورد (exit=$RES)" | tee -a "$LOG_FILE"
           done
 
           FINAL_COUNT=$(find "$TARGET_DIR" -name "*.mp4" | wc -l)
           if [ $FINAL_COUNT -eq 0 ]; then
-            echo "❌ هیچ ویدیویی دانلود نشد. دلایل احتمالی:"
-            echo "   - اکانت خصوصی است (با @tiktok تست کنید)"
-            echo "   - آی‌پی گیت‌هاب مسدود است (پروکسی دستی وارد کنید)"
-            echo "   - نام کاربری اشتباه است"
+            # نوشتن راهنمایی در README
+            cat > "$TARGET_DIR/README.md" << 'EOFREADME'
+# ❌ دانلود ناموفق
+
+هیچ ویدیویی دریافت نشد. دلایل احتمالی:
+1. **اکانت خصوصی است** → فقط اکانت‌های عمومی پشتیبانی می‌شوند.
+2. **مسدودیت آی‌پی** → حتی با WARP هم ممکن است بلاک شوید. از پروکسی دستی استفاده کنید.
+3. **نام کاربری اشتباه** → دوباره بررسی کنید.
+
+📄 **فایل `debug.log`** را باز کنید و خطاهای yt-dlp را ببینید.
+EOFREADME
+            echo "❌ هیچ ویدیویی دانلود نشد. فایل debug.log برای بررسی ایجاد شد." | tee -a "$LOG_FILE"
           else
-            echo "✅ مجموعاً $FINAL_COUNT ویدیو با موفقیت ذخیره شد."
+            echo "# 🎵 ویدیوهای @${USER}" > "$TARGET_DIR/README.md"
+            echo "تعداد: $FINAL_COUNT" >> "$TARGET_DIR/README.md"
+            echo "✅ $FINAL_COUNT ویدیو ذخیره شد." | tee -a "$LOG_FILE"
           fi
 
-      - name: 📤 Push پوشه به مخزن
+      - name: 📤 Push پوشه و لاگ‌ها
         if: always()
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add raw_tiktok/
           if ! git diff --cached --quiet; then
-            TOTAL=$(find raw_tiktok -name '*.mp4' | wc -l)
+            TOTAL=$(find raw_tiktok -name "*.mp4" | wc -l)
             git commit -m "🎵 TikTok @${{ github.event.inputs.tiktok_user }} ($TOTAL ویدیو)"
             git pull --rebase origin main 2>/dev/null || true
             git push origin main
